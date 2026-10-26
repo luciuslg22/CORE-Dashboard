@@ -1,0 +1,881 @@
+import { useState, useEffect } from 'react'
+import './App.css'
+import Login from './components/Login'
+import GerenciarUsuarios from './components/GerenciarUsuarios'
+
+import Relatorios, {
+  carregarRelatorios
+} from './components/Relatorios'
+
+import Acoes from './components/Acoes'
+import RankingOperacional from './components/RankingOperacional'
+import FichaPolicial from './components/FichaPolicial'
+import Configuracoes from './components/Configuracoes'
+
+const oficiaisIniciais = [
+  { id: 436, nome: 'Rhuan Balabala', patente: '1º SARGENTO', interna: 'COMANDO', status: 'ATIVO' },
+  { id: 6828, nome: 'Mikhael Dyballa Veesse', patente: 'SOLDADO', interna: 'SUB COMANDO', status: 'ATIVO' },
+  { id: 264, nome: "Nice Xeid'aura", patente: 'SOLDADO', interna: 'COORDENADOR', status: 'ATIVO' },
+  { id: 286, nome: 'Catatau Geremia', patente: '3º SARGENTO', interna: 'COORDENADOR', status: 'ATIVO' },
+  { id: 416, nome: 'Souza Veesse', patente: 'SOLDADO', interna: 'COORDENADOR', status: 'ATIVO' },
+  { id: 594, nome: 'Abreu Harden', patente: 'SOLDADO', interna: 'COORDENADOR', status: 'ATIVO' }
+]
+
+
+const capacitacoesOperacionais = ['MODULAÇÃO', 'ABORDAGEM', 'ACOMPANHAMENTO', 'PRISIONAL']
+
+const cursosDisponiveis = [
+  'MERG', 'AÇ', 'GA',
+  'JO', 'BFP', 'BFS', 'BFC', 'EM',
+  'BOB', 'NI', 'PA', 'HR', 'BP',
+  'BC'
+]
+
+
+const menus = [
+  { icone: '▦', nome: 'Dashboard' },
+  { icone: '♟', nome: 'Efetivo' },
+  { icone: '▤', nome: 'Cursos' },
+  { icone: '▥', nome: 'Relatórios' },
+  { icone: '◈', nome: 'Ações' },
+  { icone: '⚙', nome: 'Configurações' },
+  { icone: '♙', nome: 'Gerenciar Usuários' }
+]
+
+const patentes = [
+  'RECRUTA',
+  'SOLDADO',
+  'CABO',
+  '3º SARGENTO',
+  '2º SARGENTO',
+  '1º SARGENTO',
+  'SUBTENENTE',
+  'TENENTE',
+  'CAPITÃO',
+  'MAJOR',
+  'CORONEL'
+]
+
+const internas = [
+  'COMANDO',
+  'SUB COMANDO',
+  'COORDENADOR',
+  'EXECUTOR',
+  'OPERADOR',
+  'MEMBRO',
+  'PROBATORIO'
+]
+function App() {
+  const [conectado, setConectado] = useState(false)
+  const [usuarioAtual, setUsuarioAtual] = useState(null)
+  const [verificandoSessao, setVerificandoSessao] = useState(true)
+
+  useEffect(() => {
+    const controlador = new AbortController()
+    const token = sessionStorage.getItem('core_token')
+
+    if (!token) {
+      setVerificandoSessao(false)
+      return () => controlador.abort()
+    }
+
+    async function recuperarSessao() {
+      try {
+        const resposta = await fetch('http://localhost:3001/api/usuario-atual', {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controlador.signal
+        })
+
+        if (!resposta.ok) {
+          if (resposta.status === 401 || resposta.status === 403) {
+            sessionStorage.removeItem('core_token')
+          }
+          return
+        }
+
+        const dados = await resposta.json()
+        if (dados.usuario) {
+          setUsuarioAtual(dados.usuario)
+          setConectado(true)
+        }
+      } catch (erro) {
+        if (erro.name !== 'AbortError') {
+          console.error('Falha ao verificar a sessão:', erro)
+        }
+      } finally {
+        if (!controlador.signal.aborted) {
+          setVerificandoSessao(false)
+        }
+      }
+    }
+
+    recuperarSessao()
+    return () => controlador.abort()
+  }, [])
+
+  function entrarAutenticado(usuario) {
+    if (!usuario || !sessionStorage.getItem('core_token')) return
+
+    setUsuarioAtual({
+      id: usuario.id,
+      nome: usuario.nome,
+      usuario: usuario.usuario,
+      patente: usuario.patente,
+      interna: usuario.interna
+    })
+    setConectado(true)
+  }
+
+  function sair() {
+    sessionStorage.removeItem('core_token')
+    setConectado(false)
+    setUsuarioAtual(null)
+    setPagina('Dashboard')
+  }
+  const [pagina, setPagina] = useState('Dashboard')
+  const [pesquisa, setPesquisa] = useState('')
+  const [filtroInterna, setFiltroInterna] = useState('TODAS')
+  const [filtroStatus, setFiltroStatus] = useState('TODOS')
+
+  const [relatorios, setRelatorios] = useState(carregarRelatorios)
+  const [modoCompacto, setModoCompacto] = useState(() =>
+    localStorage.getItem('core_modo_compacto') === 'true'
+  )
+
+  useEffect(() => {
+    localStorage.setItem('core_modo_compacto', String(modoCompacto))
+  }, [modoCompacto])
+
+  const [acoes, setAcoes] = useState(() => {
+  try {
+    const salvas = localStorage.getItem('core_acoes')
+    const dados = salvas ? JSON.parse(salvas) : []
+    return Array.isArray(dados) ? dados : []
+  } catch {
+    return []
+  }
+})
+
+useEffect(() => {
+  localStorage.setItem('core_acoes', JSON.stringify(acoes))
+}, [acoes])
+
+const estatisticasAcoes = {
+  vitorias: acoes.filter(acao => acao.resultado === 'VITÓRIA').length,
+  derrotas: acoes.filter(acao => acao.resultado === 'DERROTA').length,
+  canceladas: acoes.filter(acao => acao.resultado === 'CANCELADA').length
+}
+
+const totalAcoes = (
+  estatisticasAcoes.vitorias +
+  estatisticasAcoes.derrotas +
+  estatisticasAcoes.canceladas
+)
+
+const acoesValidas = (
+  estatisticasAcoes.vitorias +
+  estatisticasAcoes.derrotas
+)
+
+const aproveitamentoAcoes = acoesValidas > 0
+  ? Math.round(estatisticasAcoes.vitorias / acoesValidas * 100)
+  : 0
+
+const relatoriosAutomaticos = Object.values(
+  acoes.reduce((grupos, acao) => {
+    const nome = String(acao.nome || '').trim()
+    const chave = nome.toLocaleLowerCase('pt-BR')
+
+    if (!nome) return grupos
+
+    if (!grupos[chave]) {
+      grupos[chave] = {
+        id: `acao-${chave}`,
+        nome,
+        vitorias: 0,
+        derrotas: 0,
+        canceladas: 0
+      }
+    }
+
+    if (acao.resultado === 'VITÓRIA') {
+      grupos[chave].vitorias++
+    }
+
+    if (acao.resultado === 'DERROTA') {
+      grupos[chave].derrotas++
+    }
+
+    if (acao.resultado === 'CANCELADA') {
+      grupos[chave].canceladas++
+    }
+
+    return grupos
+  }, {})
+)
+
+const relatoriosExibidos = [
+  ...relatorios,
+  ...relatoriosAutomaticos
+]
+
+  const [oficiais, setOficiais] = useState(() => {
+    try {
+      const salvos = localStorage.getItem('core_oficiais')
+      const dados = salvos ? JSON.parse(salvos) : oficiaisIniciais
+
+      return Array.isArray(dados) ? dados : oficiaisIniciais
+    } catch {
+      return oficiaisIniciais
+    }
+  })
+
+  const [modalAberto, setModalAberto] = useState(false)
+  const [editando, setEditando] = useState(null)
+  const [idFichaAberta, setIdFichaAberta] = useState(null)
+
+  const [formulario, setFormulario] = useState({
+    id: '',
+    nome: '',
+    patente: 'SOLDADO',
+    interna: 'OPERADOR',
+    status: 'ATIVO',
+    dataEntrada: ''
+  })
+
+  useEffect(() => {
+    localStorage.setItem('core_oficiais', JSON.stringify(oficiais))
+  }, [oficiais])
+
+  const normalizarInterna = valor => String(valor || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+
+  const ordemInternas = internas.map(normalizarInterna)
+
+  const filtrados = oficiais
+    .filter(oficial => {
+      const correspondePesquisa = `${oficial.nome} ${oficial.id} ${oficial.interna} ${oficial.patente}`
+        .toLocaleLowerCase('pt-BR')
+        .includes(pesquisa.trim().toLocaleLowerCase('pt-BR'))
+
+      if (pagina !== 'Efetivo') return correspondePesquisa
+
+      const correspondeInterna = filtroInterna === 'TODAS' ||
+        normalizarInterna(oficial.interna) === normalizarInterna(filtroInterna)
+      const correspondeStatus = filtroStatus === 'TODOS' || oficial.status === filtroStatus
+
+      return correspondePesquisa && correspondeInterna && correspondeStatus
+    })
+    .sort((primeiro, segundo) => {
+      const posicaoPrimeiro = ordemInternas.indexOf(normalizarInterna(primeiro.interna))
+      const posicaoSegundo = ordemInternas.indexOf(normalizarInterna(segundo.interna))
+      const ordemPrimeiro = posicaoPrimeiro === -1 ? ordemInternas.length : posicaoPrimeiro
+      const ordemSegundo = posicaoSegundo === -1 ? ordemInternas.length : posicaoSegundo
+
+      return ordemPrimeiro - ordemSegundo || Number(primeiro.id) - Number(segundo.id)
+    })
+
+  const resumoInternas = internas.map(interna => ({
+    interna,
+    quantidade: oficiais.filter(oficial =>
+      normalizarInterna(oficial.interna) === normalizarInterna(interna)
+    ).length
+  }))
+
+  const totalAtivos = oficiais.filter(
+    oficial => oficial.status === 'ATIVO'
+  ).length
+
+  const totalInativos = oficiais.filter(
+    oficial => oficial.status === 'INATIVO'
+  ).length
+
+  function alterarStatus(id) {
+    setOficiais(anteriores =>
+      anteriores.map(oficial =>
+        oficial.id === id
+          ? {
+              ...oficial,
+              status: oficial.status === 'ATIVO' ? 'INATIVO' : 'ATIVO'
+            }
+          : oficial
+      )
+    )
+  }
+
+  
+function alterarCurso(id, curso) {
+  setOficiais(anteriores =>
+    anteriores.map(oficial => {
+      if (oficial.id !== id) return oficial
+
+      const cursos = oficial.cursos || {}
+
+      return {
+        ...oficial,
+        cursos: {
+          ...cursos,
+          [curso]: !cursos[curso]
+        }
+      }
+    })
+  )
+}
+
+function contarCursos(oficial) {
+  return cursosDisponiveis.filter(
+    curso => oficial.cursos?.[curso] === true
+  ).length
+}
+
+
+  function abrirCadastro() {
+    setEditando(null)
+
+    setFormulario({
+      id: '',
+      nome: '',
+      patente: 'SOLDADO',
+      interna: 'OPERADOR',
+      status: 'ATIVO',
+      dataEntrada: new Date().toLocaleDateString('en-CA')
+    })
+
+    setModalAberto(true)
+  }
+
+  function abrirEdicao(oficial) {
+    setEditando(oficial.id)
+    setFormulario({ ...oficial })
+    setModalAberto(true)
+  }
+
+  function fecharModal() {
+    setModalAberto(false)
+    setEditando(null)
+  }
+
+  function alterarFormulario(campo, valor) {
+    setFormulario(anterior => ({
+      ...anterior,
+      [campo]: valor
+    }))
+  }
+
+  function salvarPolicial(evento) {
+    evento.preventDefault()
+
+    const id = Number(formulario.id)
+    const nome = formulario.nome.trim()
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      alert('Informe um ID válido.')
+      return
+    }
+
+    if (!nome) {
+      alert('Informe o nome do policial.')
+      return
+    }
+
+    const idExistente = oficiais.some(
+      oficial => oficial.id === id && oficial.id !== editando
+    )
+
+    if (idExistente) {
+      alert('Já existe um policial cadastrado com este ID.')
+      return
+    }
+
+    const dados = {
+      ...formulario,
+      id,
+      nome
+    }
+
+    if (editando !== null) {
+      setOficiais(anteriores =>
+        anteriores.map(oficial =>
+          oficial.id === editando ? dados : oficial
+        )
+      )
+    } else {
+      setOficiais(anteriores => [...anteriores, dados])
+    }
+
+    fecharModal()
+  }
+
+  function excluirPolicial(oficial) {
+    const confirmado = window.confirm(
+      `Deseja realmente excluir o policial ${oficial.nome} (ID ${oficial.id})?`
+    )
+
+    if (!confirmado) return
+
+    setOficiais(anteriores =>
+      anteriores.filter(item => item.id !== oficial.id)
+    )
+  }
+
+  const indicadores = [
+    ['EFETIVO TOTAL', oficiais.length, '♟'],
+    ['EM ATIVIDADE', totalAtivos, '↗'],
+    ['INATIVOS', totalInativos, '↘'],
+    ['APROVEITAMENTO', `${aproveitamentoAcoes}%`, '▥'],
+    ['VITÓRIAS', estatisticasAcoes.vitorias, '★'],
+    ['DERROTAS', estatisticasAcoes.derrotas, '✕'],
+    ['TOTAL DE AÇÕES', totalAcoes, '▤']
+  ]
+
+  if (verificandoSessao) {
+    return <div role="status" style={{ padding: 24 }}>Verificando sessão do C.O.R.E...</div>
+  }
+
+  if (!conectado) {
+    return <Login aoEntrar={entrarAutenticado} />
+  }
+
+  return (
+    <div className={`sistema ${modoCompacto ? 'core-compacto' : ''}`}>
+      <aside className="menu-lateral">
+        <div className="marca">
+          <div className="simbolo"><img src="/logo-core.webp" alt="Logo C.O.R.E" className="logo-core-lateral" /></div>
+          <h2>C.O.R.E</h2>
+          <p>COORDENADORIA DE RECURSOS ESPECIAIS</p>
+        </div>
+
+        <nav>
+          {menus.filter(item => item.nome !== 'Gerenciar Usuários' || usuarioAtual?.interna === 'ALTO COMANDO').map(item => (
+            <button
+              key={item.nome}
+              className={
+                pagina === item.nome
+                  ? 'menu-item ativo'
+                  : 'menu-item'
+              }
+              onClick={() => setPagina(item.nome)}
+            >
+              <span>{item.icone}</span>
+              {item.nome}
+            </button>
+          ))}
+        </nav>
+
+        <div className="menu-rodape">
+          COORDENADORIA DE RECURSOS ESPECIAIS
+          <small>SISTEMA C.O.R.E v1.0</small>
+        </div>
+      </aside>
+
+      <main className="conteudo">
+        <header className="cabecalho">
+          <div>
+            <p>COORDENADORIA DE RECURSOS ESPECIAIS</p>
+            <h1>C.O.R.E</h1>
+            <span>♦️ • Quem teme ser vencido tem a certeza da derrota.</span>
+          </div>
+
+          <div className="usuario">
+            <div className="avatar">C</div>
+
+            <div>
+              <strong>{usuarioAtual?.nome || 'Usuário'}</strong>
+              <small>{usuarioAtual?.patente} • {usuarioAtual?.interna}</small>
+              <button type="button" onClick={sair} style={{ display: 'block', marginTop: 8, background: '#b91c1c', color: '#fff', border: 0, borderRadius: 6, padding: '6px 10px', cursor: 'pointer' }}>SAIR DO SISTEMA</button>
+            </div>
+          </div>
+        </header>
+
+        <section className="indicadores">
+          {indicadores.map((indicador, i) => (
+            <div className="indicador" key={i}>
+              <span className="indicador-icone">
+                {indicador[2]}
+              </span>
+
+              <div>
+                <h2>{indicador[1]}</h2>
+                <p>{indicador[0]}</p>
+              </div>
+            </div>
+          ))}
+        </section>
+
+        {pagina !== 'Relatórios' && pagina !== 'Configurações' && pagina !== 'Gerenciar Usuários' && <section className="painel">
+          <div className="painel-topo">
+            <h3>▦ {pagina === 'Dashboard' ? 'REGISTRO OPERACIONAL' : pagina.toUpperCase()}</h3>
+            {(pagina === 'Dashboard' || pagina === 'Efetivo' || pagina === 'Cursos') && (
+              <div className="ferramentas">
+                <input
+                  placeholder="Pesquisar nome, ID ou interna..."
+                  value={pesquisa}
+                  onChange={e => setPesquisa(e.target.value)}
+                />
+                {(pagina === 'Dashboard' || pagina === 'Efetivo') && (
+                  <button className="botao-adicionar" onClick={abrirCadastro}>
+                    + Adicionar Policial
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {pagina === 'Efetivo' && (
+            <div className="resumo-efetivo">
+              {resumoInternas.map(item => (
+                <div className="resumo-interna" key={item.interna}>
+                  <span className="resumo-interna-titulo">{item.interna === 'PROBATORIO' ? 'PROBATÓRIO' : item.interna}</span>
+                  <strong className="resumo-interna-numero">{item.quantidade}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {pagina === 'Efetivo' && (
+            <div className="filtros-efetivo">
+              <div className="filtro-efetivo-campo">
+                <label htmlFor="filtro-interna">FILTRAR POR INTERNA</label>
+                <select
+                  id="filtro-interna"
+                  value={filtroInterna}
+                  onChange={evento => setFiltroInterna(evento.target.value)}
+                >
+                  <option value="TODAS">TODAS AS INTERNAS</option>
+                  {internas.map(interna => (
+                    <option key={interna} value={interna}>
+                      {interna === 'PROBATORIO' ? 'PROBATÓRIO' : interna}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="filtro-efetivo-campo">
+                <label htmlFor="filtro-status">FILTRAR POR STATUS</label>
+                <select
+                  id="filtro-status"
+                  value={filtroStatus}
+                  onChange={evento => setFiltroStatus(evento.target.value)}
+                >
+                  <option value="TODOS">TODOS OS STATUS</option>
+                  <option value="ATIVO">ATIVOS</option>
+                  <option value="INATIVO">INATIVOS</option>
+                </select>
+              </div>
+              <div className="filtros-efetivo-acoes">
+                <span>{filtrados.length} policial(is) encontrado(s)</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFiltroInterna('TODAS')
+                    setFiltroStatus('TODOS')
+                    setPesquisa('')
+                  }}
+                >
+                  LIMPAR FILTROS
+                </button>
+              </div>
+            </div>
+          )}
+
+          {(pagina === 'Dashboard' || pagina === 'Efetivo') ? (
+            <div className="tabela-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th><th>PATENTE</th><th>INTERNA</th><th>NOME</th>
+                    {capacitacoesOperacionais.map(curso => <th key={curso}>{curso}</th>)}
+                    <th>DATA DE ENTRADA</th><th>STATUS</th><th>AÇÕES</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtrados.map(oficial => (
+                    <tr key={oficial.id}>
+                      <td>{oficial.id}</td>
+                      <td>{oficial.patente}</td>
+                      <td>{oficial.interna}</td>
+                      <td>
+                        {pagina === 'Efetivo' ? (
+                          <button
+                            type="button"
+                            className="nome-policial-ficha"
+                            title="Abrir ficha individual"
+                            onClick={() => setIdFichaAberta(oficial.id)}
+                          >
+                            {oficial.nome}
+                          </button>
+                        ) : oficial.nome}
+                      </td>
+                      {capacitacoesOperacionais.map(curso => (
+                        <td key={curso}>
+                          <input
+                            type="checkbox"
+                            checked={oficial.cursos?.[curso] === true}
+                            onChange={() => alterarCurso(oficial.id, curso)}
+                          />
+                        </td>
+                      ))}
+                      <td>{oficial.dataEntrada ? oficial.dataEntrada.split('-').reverse().join('/') : '—'}</td>
+                      <td>
+                        <button
+                          className={oficial.status === 'ATIVO' ? 'status ativo-status' : 'status inativo-status'}
+                          onClick={() => alterarStatus(oficial.id)}
+                        >
+                          {oficial.status}
+                        </button>
+                      </td>
+                      <td>
+                        <div className="acoes-tabela">
+                          <button className="botao-editar" title="Editar policial" onClick={() => abrirEdicao(oficial)}>✎</button>
+                          <button className="botao-excluir" title="Excluir policial" onClick={() => excluirPolicial(oficial)}>✕</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {filtrados.length === 0 && (
+                    <tr><td colSpan={capacitacoesOperacionais.length + 7}>Nenhum policial encontrado.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : pagina === 'Cursos' ? (
+            <div className="tabela-container">
+              <table className="tabela-cursos">
+                <thead>
+                  <tr>
+                    <th>ID</th><th>NOME</th><th>INTERNA</th>
+                    {cursosDisponiveis.map(curso => <th key={curso}>{curso}</th>)}
+                    <th>CONCLUÍDOS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtrados.map(oficial => (
+                    <tr key={oficial.id}>
+                      <td>{oficial.id}</td>
+                      <td>{oficial.nome}</td>
+                      <td>{oficial.interna}</td>
+                      {cursosDisponiveis.map(curso => (
+                        <td key={curso}>
+                          <input
+                            type="checkbox"
+                            checked={oficial.cursos?.[curso] === true}
+                            onChange={() => alterarCurso(oficial.id, curso)}
+                          />
+                        </td>
+                      ))}
+                      <td><span className="contador-cursos">{contarCursos(oficial)} / {cursosDisponiveis.length}</span></td>
+                    </tr>
+                  ))}
+                  {filtrados.length === 0 && (
+                    <tr><td colSpan={cursosDisponiveis.length + 4}>Nenhum policial encontrado.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : pagina === 'Ações' ? (
+  <Acoes
+  oficiais={oficiais}
+  acoes={acoes}
+  setAcoes={setAcoes}
+/>
+) : (
+  <div className="pagina-futura">
+    {pagina === 'Relatórios' ? 'Gerencie os relatórios na tabela abaixo.' : `O módulo ${pagina} será desenvolvido nas próximas etapas.`}</div>
+          )}
+        </section>}
+
+        {pagina === 'Gerenciar Usuários' && usuarioAtual?.interna === 'ALTO COMANDO' && (
+          <GerenciarUsuarios usuarioAtual={usuarioAtual} />
+        )}
+
+        {pagina === 'Configurações' && (
+          <Configuracoes
+            oficiais={oficiais}
+            acoes={acoes}
+            relatorios={relatorios}
+            setOficiais={setOficiais}
+            setAcoes={setAcoes}
+            setRelatorios={setRelatorios}
+            modoCompacto={modoCompacto}
+            setModoCompacto={setModoCompacto}
+            cursosDisponiveis={cursosDisponiveis}
+          />
+        )}
+
+        {pagina === 'Dashboard' && (
+          <RankingOperacional oficiais={oficiais} acoes={acoes} />
+        )}
+
+        {(pagina === 'Dashboard' || pagina === 'Relatórios') && (
+            <Relatorios
+              automaticos={relatoriosAutomaticos}
+              completo={pagina === 'Relatórios'}
+            />
+        )}
+
+        <footer>
+          C.O.R.E © 2026 — COORDENADORIA DE RECURSOS ESPECIAIS
+        </footer>
+
+        {idFichaAberta !== null && (
+          <FichaPolicial
+            oficial={oficiais.find(item => item.id === idFichaAberta)}
+            oficiais={oficiais}
+            acoes={acoes}
+            cursosDisponiveis={cursosDisponiveis}
+            capacitacoesOperacionais={capacitacoesOperacionais}
+            aoFechar={() => setIdFichaAberta(null)}
+          />
+        )}
+
+        {modalAberto && (
+          <div
+            className="modal-fundo"
+            onClick={fecharModal}
+          >
+            <div
+              className="modal-conteudo"
+              onClick={evento => evento.stopPropagation()}
+            >
+              <div className="modal-cabecalho">
+                <div>
+                  <h2>
+                    {editando !== null
+                      ? 'EDITAR POLICIAL'
+                      : 'ADICIONAR POLICIAL'}
+                  </h2>
+
+                  <p>
+                    COORDENADORIA DE RECURSOS ESPECIAIS — C.O.R.E
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={fecharModal}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={salvarPolicial}>
+                <label htmlFor="policial-id">
+                  ID DO POLICIAL
+                </label>
+
+                <input
+                  id="policial-id"
+                  type="number"
+                  min="1"
+                  required
+                  value={formulario.id}
+                  onChange={e =>
+                    alterarFormulario('id', e.target.value)
+                  }
+                />
+
+                <label htmlFor="policial-nome">
+                  NOME DO POLICIAL
+                </label>
+
+                <input
+                  id="policial-nome"
+                  required
+                  value={formulario.nome}
+                  onChange={e =>
+                    alterarFormulario('nome', e.target.value)
+                  }
+                />
+
+                <label htmlFor="policial-patente">
+                  PATENTE
+                </label>
+
+                <select
+                  id="policial-patente"
+                  value={formulario.patente}
+                  onChange={e =>
+                    alterarFormulario('patente', e.target.value)
+                  }
+                >
+                  {patentes.map(patente => (
+                    <option key={patente} value={patente}>
+                      {patente}
+                    </option>
+                  ))}
+                </select>
+
+                <label htmlFor="policial-interna">
+                  INTERNA
+                </label>
+
+                <select
+                  id="policial-interna"
+                  value={formulario.interna}
+                  onChange={e =>
+                    alterarFormulario('interna', e.target.value)
+                  }
+                >
+                  {internas.map(interna => (
+                    <option key={interna} value={interna}>
+                      {interna}
+                    </option>
+                  ))}
+                </select>
+
+                <label htmlFor="policial-data-entrada">
+                  DATA DE ENTRADA NA UNIDADE
+                </label>
+
+                <input
+                  id="policial-data-entrada"
+                  type="date"
+                  value={formulario.dataEntrada || ''}
+                  onChange={e => alterarFormulario('dataEntrada', e.target.value)}
+                />
+
+                <label htmlFor="policial-status">
+                  STATUS
+                </label>
+
+                <select
+                  id="policial-status"
+                  value={formulario.status}
+                  onChange={e =>
+                    alterarFormulario('status', e.target.value)
+                  }
+                >
+                  <option value="ATIVO">ATIVO</option>
+                  <option value="INATIVO">INATIVO</option>
+                </select>
+
+                <div className="modal-botoes">
+                  <button
+                    type="button"
+                    className="botao-cancelar"
+                    onClick={fecharModal}
+                  >
+                    CANCELAR
+                  </button>
+
+                  <button
+                    type="submit"
+                    className="botao-salvar"
+                  >
+                    {editando !== null
+                      ? 'SALVAR ALTERAÇÕES'
+                      : 'CADASTRAR POLICIAL'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  )
+}
+export default App
+  

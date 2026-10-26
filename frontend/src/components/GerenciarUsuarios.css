@@ -1,0 +1,348 @@
+.painel:has(> h2:first-child) {
+  padding: 26px;
+}
+
+.painel:has(> h2:first-child) > h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  letter-spacing: 1px;
+  color: #f4f4f5;
+}
+
+.painel:has(> h2:first-child) > p {
+  margin: 0 0 25px;
+  color: #9999a2;
+  font-size: 12px;
+}
+
+.painel:has(> h2:first-child) > form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 22px;
+  background: #17181b;
+  border: 1px solid #303036;
+  border-radius: 10px;
+}
+
+.painel:has(> h2:first-child) > form input,
+.painel:has(> h2:first-child) > form select {
+  width: 100%;
+  min-width: 0;
+  padding: 13px;
+  background: #0d0e11;
+  color: #f5f5f5;
+  border: 1px solid #37373d;
+  border-radius: 7px;
+  outline: none;
+  font-size: 13px;
+}
+
+.painel:has(> h2:first-child) > form input:focus,
+.painel:has(> h2:first-child) > form select:focus {
+  border-color: #dc2626;
+}
+
+.painel:has(> h2:first-child) > form button {
+  grid-column: 1 / -1;
+  padding: 13px;
+  background: #b91c1c;
+  color: white;
+  border: 1px solid #dc2626;
+  border-radius: 7px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.painel:has(> h2:first-child) > form button:hover {
+  background: #dc2626;
+}
+
+.painel:has(> h2:first-child) > h3 {
+  margin: 30px 0 15px;
+  font-size: 15px;
+  letter-spacing: 1px;
+  color: #f4f4f5;
+}
+
+.painel:has(> h2:first-child) > div {
+  padding: 18px;
+  margin-bottom: 12px;
+  background: #191a1e;
+  border: 1px solid #35353a;
+  border-left: 3px solid #dc2626;
+  border-radius: 8px;
+}
+
+.painel:has(> h2:first-child) > div strong {
+  color: white;
+  font-size: 15px;
+}
+
+.painel:has(> h2:first-child) > div p {
+  color: #c1c1c8;
+  font-size: 12px;
+  margin: 9px 0;
+}
+
+.painel:has(> h2:first-child) > div small {
+  color: #ef6b73;
+  font-size: 12px;
+}
+
+@media (max-width: 650px) {
+  .painel:has(> h2:first-child) > form {
+    grid-template-columns: 1fr;
+  }
+}
+
+.painel > div > button {
+  margin-top: 14px;
+  margin-right: 10px;
+  padding: 10px 18px;
+  background: #242428;
+  color: #ffffff;
+  border: 1px solid #45454b;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.painel > div > button:hover {
+  background: #b91c1c;
+  border-color: #dc2626;
+}
+
+.painel > div > button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+
+.usuarios-estatisticas {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 15px;
+  margin: 25px 0;
+}
+
+.usuarios-indicador {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px;
+  background: #17181b;
+  border: 1px solid #303036;
+  border-left: 3px solid #dc2626;
+  border-radius: 10px;
+  transition: 0.2s ease;
+}
+
+.usuarios-indicador:hover {
+  background: #1e1f24;
+  border-color: #dc2626;
+}
+
+.usuarios-indicador span {
+  color: #a1a1aa;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.usuarios-indicador strong {
+  color: #ffffff;
+  font-size: 30px;
+  font-weight: 800;
+}
+
+.usuarios-indicador:nth-child(2) {
+  border-left-color: #22c55e;
+}
+
+.usuarios-indicador:nth-child(3) {
+  border-left-color: #ef4444;
+}
+
+@media (max-width: 700px) {
+  .usuarios-estatisticas {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.usuarios-tabela-container {
+  width: 100%;
+  overflow-x: auto;
+  margin-top: 20px;
+  padding: 0;
+  border: 1px solid #303036;
+  border-radius: 10px;
+  background: #17181b;
+}
+
+.usuarios-tabela {
+  width: 100%;
+  min-width: 850px;
+  border-collapse: collapse;
+  color: #f4f4f5;
+  font-size: 13px;
+}
+
+.usuarios-tabela thead {
+  background: #222329;
+}
+
+.usuarios-tabela th {
+  padding: 16px;
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #a1a1aa;
+  border-bottom: 1px solid #393940;
+}
+
+.usuarios-tabela td {
+  padding: 15px 16px;
+  border-bottom: 1px solid #303036;
+  vertical-align: middle;
+}
+
+.usuarios-tabela tbody tr:hover {
+  background: #222329;
+}
+
+.usuarios-tabela tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.usuarios-tabela td strong {
+  color: #ffffff;
+}
+
+.usuarios-tabela td button {
+  padding: 9px 12px;
+  margin: 3px;
+  background: #27272c;
+  color: #ffffff;
+  border: 1px solid #44444a;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.usuarios-tabela td button:hover {
+  background: #b91c1c;
+  border-color: #dc2626;
+}
+
+.usuarios-tabela td button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.usuarios-status-ativo {
+  color: #22c55e;
+  font-weight: 700;
+}
+
+.usuarios-status-inativo {
+  color: #ef4444;
+  font-weight: 700;
+}
+.botao-excluir-usuario {
+  background: #991b1b;
+  color: #ffffff;
+  border: 1px solid #dc2626;
+  border-radius: 6px;
+  padding: 9px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.botao-excluir-usuario:hover:not(:disabled) {
+  background: #dc2626;
+  border-color: #ef4444;
+}
+
+.botao-excluir-usuario:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.gerenciar-usuarios .usuarios-pesquisa,
+.gerenciar-usuarios .usuarios-filtro {
+  background: #1c1c1f;
+  color: #ffffff;
+  border: 1px solid #34343a;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.gerenciar-usuarios .usuarios-pesquisa {
+  width: 320px;
+  max-width: 100%;
+  margin-right: 12px;
+  margin-bottom: 20px;
+}
+
+.gerenciar-usuarios .usuarios-filtro {
+  min-width: 190px;
+  cursor: pointer;
+  margin-bottom: 20px;
+}
+
+.gerenciar-usuarios .usuarios-pesquisa:focus,
+.gerenciar-usuarios .usuarios-filtro:focus {
+  border-color: #dc2626;
+}
+
+.gerenciar-usuarios .usuarios-pesquisa::placeholder {
+  color: #85858e;
+}
+
+.gerenciar-usuarios .usuarios-filtro option {
+  background: #1c1c1f;
+  color: #ffffff;
+}
+.gerenciar-usuarios .usuarios-filtros {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0 24px;
+}
+
+.gerenciar-usuarios .usuarios-filtros .usuarios-pesquisa {
+  flex: 1;
+  width: 320px;
+  min-width: 220px;
+  margin: 0;
+}
+
+.gerenciar-usuarios .usuarios-filtros .usuarios-filtro {
+  width: 210px;
+  min-width: 180px;
+  margin: 0;
+}
+
+@media (max-width: 600px) {
+  .gerenciar-usuarios .usuarios-filtros {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .gerenciar-usuarios .usuarios-filtros .usuarios-pesquisa,
+  .gerenciar-usuarios .usuarios-filtros .usuarios-filtro {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+  }
+}
