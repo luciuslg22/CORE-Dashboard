@@ -48,20 +48,26 @@ export default function Configuracoes({
         </div>
       )}
 
-      <div className="core-config-grid">
-        <article className="core-config-card core-config-info">
-          <h3><span>ⓘ</span> INFORMAÇÕES DO SISTEMA</h3>
-          <div className="core-config-identidade">
-            <div className="core-config-emblema"><img src="/logo-core.webp" alt="Logo C.O.R.E" className="logo-core-config" /></div>
-            <div>
-              <strong>C.O.R.E</strong>
-              <p>COORDENADORIA DE RECURSOS ESPECIAIS</p>
-              <div>▦ Departamento de Polícia Host</div>
-              <div>▤ Versão 1.0.0</div>
-              <div>◷ Armazenado no Banco de Dados</div>
-            </div>
-          </div>
-        </article>
+    <div className="core-config-grid">
+  <article className="core-config-card core-config-info">
+    <h3><span>ⓘ</span> INFORMAÇÕES DO SISTEMA</h3>
+    <div className="core-config-identidade">
+      <div className="core-config-emblema">
+        <img
+          src={`${import.meta.env.BASE_URL}logo-core.webp`}
+          alt="Logo C.O.R.E"
+          className="logo-core-config"
+        />
+      </div>
+      <div>
+        <strong>C.O.R.E</strong>
+        <p>COORDENADORIA DE RECURSOS ESPECIAIS</p>
+        <div>▦ Departamento de Polícia Host</div>
+        <div>▤ Versão 1.0.0</div>
+        <div>◷ Armazenado no Banco de Dados</div>
+      </div>
+    </div>
+  </article>
 
         <article className="core-config-card core-config-limpeza">
           <h3><span>♜</span> LIMPAR DADOS</h3>

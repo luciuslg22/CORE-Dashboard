@@ -1,5 +1,7 @@
 import { useState } from 'react'
 
+import { supabase } from '../supabase'
+
 function dataAtual() {
   const hoje = new Date()
   const local = new Date(hoje.getTime() - hoje.getTimezoneOffset() * 60000)
@@ -37,37 +39,76 @@ export default function Acoes({ oficiais = [], acoes = [], setAcoes }) {
     })
   }
 
-  function cadastrarAcao(evento) {
-    evento.preventDefault()
+async function cadastrarAcao(evento) {
+  evento.preventDefault()
 
-    if (!formulario.nome.trim() || !formulario.comandante || !formulario.responsavelCall) {
-      alert('Informe a operação, o comandante e o responsável pela CALL.')
-      return
-    }
-
-    const novaAcao = {
-      ...formulario,
-      id: crypto.randomUUID(),
-      nome: formulario.nome.trim(),
-      comandante: String(formulario.comandante),
-      responsavelCall: String(formulario.responsavelCall),
-      participantes: [...new Set(formulario.participantes.map(String))]
-    }
-
-    setAcoes(anteriores => [novaAcao, ...anteriores])
-    setFormulario(formularioInicial())
+  if (!formulario.nome.trim() || !formulario.comandante || !formulario.responsavelCall) {
+    alert('Informe a operação, o comandante e o responsável pela CALL.')
+    return
   }
 
-  function excluirAcao(id) {
-    if (!window.confirm('Deseja excluir esta ação?')) return
-    setAcoes(anteriores => anteriores.filter(acao => acao.id !== id))
+  const novaAcao = {
+    ...formulario,
+    id: crypto.randomUUID(),
+    nome: formulario.nome.trim(),
+    comandante: String(formulario.comandante),
+    responsavelCall: String(formulario.responsavelCall),
+    participantes: [...new Set(formulario.participantes.map(String))]
   }
 
-  function alterarCallExistente(id, responsavelCall) {
-    setAcoes(anteriores => anteriores.map(acao =>
-      acao.id === id ? { ...acao, responsavelCall } : acao
-    ))
+  const { error } = await supabase
+    .from('core_acoes')
+    .insert(novaAcao)
+
+  if (error) {
+    console.error('Erro ao cadastrar ação:', error)
+    alert('Não foi possível cadastrar a ação: ' + error.message)
+    return
   }
+
+  setAcoes(anteriores => [novaAcao, ...anteriores])
+  setFormulario(formularioInicial())
+}
+
+async function excluirAcao(id) {
+  if (!window.confirm('Deseja excluir esta ação?')) return
+
+  const { error } = await supabase
+    .from('core_acoes')
+    .delete()
+    .eq('id', id)
+
+  if (error) {
+    console.error('Erro ao excluir ação:', error)
+    alert('Não foi possível excluir a ação: ' + error.message)
+    return
+  }
+
+  setAcoes(anteriores =>
+    anteriores.filter(acao => String(acao.id) !== String(id))
+  )
+}
+
+async function alterarCallExistente(id, responsavelCall) {
+  const { error } = await supabase
+    .from('core_acoes')
+    .update({ responsavelCall })
+    .eq('id', id)
+
+  if (error) {
+    console.error('Erro ao alterar CALL:', error)
+    alert('Não foi possível alterar o responsável pela CALL: ' + error.message)
+    return
+  }
+
+  setAcoes(anteriores =>
+    anteriores.map(acao =>
+      String(acao.id) === String(id)
+        ? { ...acao, responsavelCall }
+        : acao
+    )
+  )
+}
 
   function nomePolicial(id) {
     if (id === '' || id === null || id === undefined) return 'Não informado'

@@ -1,6 +1,6 @@
-
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./GerenciarUsuarios.css";
+import { supabase } from "../supabase";
 
 const formularioInicial = {
   nome: "",
@@ -21,24 +21,72 @@ const internas = [
 ];
 
 export default function GerenciarUsuarios({ usuarioAtual }) {
+  const [usuarios, setUsuarios] = useState([]);
   const [usuarioEditando, setUsuarioEditando] = useState(null);
   const [pesquisa, setPesquisa] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("TODOS");
-
-  const [usuarios, setUsuarios] = useState(() => {
-    try {
-      const dados = JSON.parse(
-        localStorage.getItem("core_usuarios_demo") || "[]"
-      );
-      return Array.isArray(dados) ? dados : [];
-    } catch {
-      return [];
-    }
-  });
-
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
   const [formulario, setFormulario] = useState({
     ...formularioInicial
   });
+
+  async function requisicaoApi(caminho, opcoes = {}) {
+    const token = sessionStorage.getItem("core_token");
+
+    if (!token) {
+      throw new Error("Sessão não encontrada. Faça login novamente.");
+    }
+
+    const resposta = await fetch(`${API}${caminho}`, {
+      ...opcoes,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(opcoes.body ? { "Content-Type": "application/json" } : {}),
+        ...opcoes.headers
+      }
+    });
+
+    const dados = await resposta.json().catch(() => ({}));
+
+    if (!resposta.ok) {
+      throw new Error(
+        dados.erro || "Não foi possível concluir a operação."
+      );
+    }
+
+    return dados;
+  }
+
+async function carregarUsuarios() {
+  setCarregando(true);
+  setErro("");
+
+  try {
+    const { data, error } = await supabase
+      .from("usuarios")
+      .select("id, nome, usuario, patente, interna, ativo")
+      .order("nome", { ascending: true });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    setUsuarios(data || []);
+  } catch (falha) {
+    setErro(falha.message);
+    setUsuarios([]);
+  } finally {
+    setCarregando(false);
+  }
+}
+
+  useEffect(() => {
+    if (usuarioAtual?.interna === "ALTO COMANDO") {
+      carregarUsuarios();
+    }
+  }, [usuarioAtual?.interna]);
 
   const usuariosFiltrados = usuarios.filter(item => {
     const termo = pesquisa.trim().toLowerCase();
@@ -62,21 +110,15 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
     }));
   }
 
-  function salvarUsuarios(atualizados) {
-    localStorage.setItem(
-      "core_usuarios_demo",
-      JSON.stringify(atualizados)
-    );
-    setUsuarios(atualizados);
-  }
-
   function limparFormulario() {
     setUsuarioEditando(null);
     setFormulario({ ...formularioInicial });
   }
 
-  function cadastrar(evento) {
+  async function cadastrar(evento) {
     evento.preventDefault();
+
+    if (salvando) return;
 
     const nome = formulario.nome.trim();
     const nomeUsuario = formulario.usuario.trim().toLowerCase();
@@ -86,9 +128,33 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
       return;
     }
 
+    if (
+      formulario.senhaTeste &&
+      formulario.senhaTeste.length < 6
+    ) {
+      alert("A senha deve ter pelo menos 6 caracteres.");
+      return;
+    }
+
+    if (!usuarioEditando && !formulario.senhaTeste) {
+      alert("Informe uma senha para o policial.");
+      return;
+    }
+
+    if (
+      !usuarioEditando &&
+      formulario.interna === "ALTO COMANDO"
+    ) {
+      const confirmado = window.confirm(
+        "ATENÇÃO: Você está criando uma conta com acesso total ao gerenciamento de usuários. Deseja continuar?"
+      );
+
+      if (!confirmado) return;
+    }
+
     if (usuarioEditando) {
       const conta = usuarios.find(
-        item => item.id === usuarioEditando
+        item => Number(item.id) === Number(usuarioEditando)
       );
 
       if (!conta) {
@@ -99,15 +165,6 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
 
       if (conta.usuario === "lucius") {
         alert("A conta administrativa principal está protegida.");
-        limparFormulario();
-        return;
-      }
-
-      if (usuarios.some(item =>
-        item.usuario.toLowerCase() === nomeUsuario &&
-        item.id !== usuarioEditando
-      )) {
-        alert("Esse nome de usuário já está sendo utilizado.");
         return;
       }
 
@@ -118,67 +175,65 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
 
         if (!confirmado) return;
       }
-
-      const atualizados = usuarios.map(item =>
-        item.id === usuarioEditando
-          ? {
-              ...item,
-              nome,
-              patente: formulario.patente,
-              interna: formulario.interna,
-              ...(formulario.senhaTeste
-                ? { senhaTeste: formulario.senhaTeste }
-                : {})
-            }
-          : item
-      );
-
-      salvarUsuarios(atualizados);
-      limparFormulario();
-      alert("Usuário atualizado com sucesso!");
-      return;
     }
 
-    if (nomeUsuario === "lucius") {
-      alert("Este nome de usuário é reservado para o administrador principal.");
-      return;
-    }
+    setSalvando(true);
 
-    if (usuarios.some(item =>
-      item.usuario.toLowerCase() === nomeUsuario
-    )) {
-      alert("Esse nome de usuário já existe.");
-      return;
-    }
+    try {
 
-    if (!formulario.senhaTeste) {
-      alert("Informe uma senha de teste.");
-      return;
-    }
-
-    if (formulario.interna === "ALTO COMANDO") {
-      const confirmado = window.confirm(
-        "ATENÇÃO: Você está criando uma conta com acesso total ao gerenciamento de usuários. Deseja continuar?"
-      );
-
-      if (!confirmado) return;
-    }
-
-    salvarUsuarios([
-      ...usuarios,
-      {
-        id: crypto.randomUUID(),
+if (usuarioEditando) {
+  const { data, error } = await supabase.functions.invoke(
+    "editar-policial",
+    {
+      body: {
+        id: usuarioEditando,
         nome,
-        usuario: nomeUsuario,
-        senhaTeste: formulario.senhaTeste,
         patente: formulario.patente,
         interna: formulario.interna,
-        ativo: true
+        ...(formulario.senhaTeste
+          ? { senha: formulario.senhaTeste }
+          : {})
       }
-    ]);
+    }
+  );
 
-    limparFormulario();
-    alert("Usuário cadastrado com sucesso!");
+  if (error || data?.erro || data?.sucesso !== true) {
+    throw new Error(
+      data?.erro || "Não foi possível atualizar o policial."
+    );
+  }
+
+  alert("Usuário atualizado com sucesso!");
+} else {
+  const { data, error } = await supabase.functions.invoke(
+    "criar-policial",
+    {
+      body: {
+        nome,
+        usuario: nomeUsuario,
+        senha: formulario.senhaTeste,
+        patente: formulario.patente,
+        interna: formulario.interna
+      }
+    }
+  );
+
+  if (error || data?.erro || data?.sucesso !== true) {
+    throw new Error(
+      data?.erro || "Não foi possível cadastrar o policial."
+    );
+  }
+
+  alert("Usuário cadastrado com sucesso!");
+}
+
+      limparFormulario();
+      await carregarUsuarios();
+    } catch (falha) {
+      alert(falha.message);
+    } finally {
+      setSalvando(false);
+    }
   }
 
   function editarUsuario(item) {
@@ -196,13 +251,12 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
       patente: item.patente,
       interna: item.interna
     });
-
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function alterarStatus(item) {
+  async function alterarStatus(item) {
     if (
-      item.id === usuarioAtual?.id ||
+      Number(item.id) === Number(usuarioAtual?.id) ||
       item.usuario === "lucius"
     ) {
       alert("Esta conta não pode ser desativada ou reativada por aqui.");
@@ -215,18 +269,32 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
       `Deseja ${acao} a conta de ${item.nome}?`
     )) return;
 
-    salvarUsuarios(
-      usuarios.map(usuario =>
-        usuario.id === item.id
-          ? { ...usuario, ativo: !usuario.ativo }
-          : usuario
-      )
-    );
+    try {
+       const { data, error } = await supabase.functions.invoke(
+  "alterar-status-policial",
+  {
+    body: {
+      id: item.id,
+      ativo: !item.ativo
+    }
+  }
+);
+
+if (error || data?.erro || data?.sucesso !== true) {
+  throw new Error(
+    data?.erro || "Não foi possível alterar o status do policial."
+  );
+}
+
+      await carregarUsuarios();
+    } catch (falha) {
+      alert(falha.message);
+    }
   }
 
-  function excluirUsuario(item) {
+  async function excluirUsuario(item) {
     if (
-      item.id === usuarioAtual?.id ||
+      Number(item.id) === Number(usuarioAtual?.id) ||
       item.usuario === "lucius"
     ) {
       alert("Esta conta administrativa não pode ser excluída.");
@@ -239,17 +307,43 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
 
     if (!confirmado) return;
 
-    const atualizados = usuarios.filter(
-      usuario => usuario.id !== item.id
-    );
-
-    salvarUsuarios(atualizados);
-
-    if (usuarioEditando === item.id) {
-      limparFormulario();
+    try {
+      
+const { data, error } = await supabase.functions.invoke(
+  "excluir-policial",
+  {
+    body: {
+      id: item.id
     }
+  }
+);
 
-    alert("Usuário excluído com sucesso!");
+if (error || data?.erro || data?.sucesso !== true) {
+  let mensagem = data?.erro;
+
+  if (!mensagem && error?.context) {
+    try {
+      const resposta = await error.context.clone().json();
+      mensagem = resposta.erro;
+    } catch {
+      mensagem = null;
+    } 
+  }
+
+  throw new Error(
+    mensagem || "Não foi possível excluir o policial."
+  );
+}
+
+      if (Number(usuarioEditando) === Number(item.id)) {
+        limparFormulario();
+      }
+
+      await carregarUsuarios();
+      alert("Usuário excluído com sucesso!");
+    } catch (falha) {
+      alert(falha.message);
+    }
   }
 
   if (usuarioAtual?.interna !== "ALTO COMANDO") {
@@ -287,6 +381,12 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
         </div>
       </div>
 
+      {erro && (
+        <p role="alert" style={{ color: "#ff7777" }}>
+          {erro}
+        </p>
+      )}
+
       <form onSubmit={cadastrar}>
         <input
           type="text"
@@ -313,14 +413,15 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
           type="password"
           placeholder={
             usuarioEditando
-              ? "Nova senha de teste (opcional)"
-              : "Senha de teste do policial"
+              ? "Nova senha (opcional)"
+              : "Senha do policial (mínimo 6 caracteres)"
           }
           value={formulario.senhaTeste}
           onChange={e =>
             atualizarFormulario("senhaTeste", e.target.value)
           }
           autoComplete="new-password"
+          minLength={6}
           required={!usuarioEditando}
         />
 
@@ -350,10 +451,12 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
           ))}
         </select>
 
-        <button type="submit">
-          {usuarioEditando
-            ? "SALVAR ALTERAÇÕES"
-            : "CADASTRAR USUÁRIO"}
+        <button type="submit" disabled={salvando}>
+          {salvando
+            ? "SALVANDO..."
+            : usuarioEditando
+              ? "SALVAR ALTERAÇÕES"
+              : "CADASTRAR USUÁRIO"}
         </button>
 
         {usuarioEditando && (
@@ -368,24 +471,24 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
 
       <h3>CONTAS CADASTRADAS ({usuarios.length})</h3>
 
-        <div className="usuarios-filtros">
-      <input
-        type="text"
-        placeholder="Pesquisar policial por nome ou usuário..."
-        value={pesquisa}
-        onChange={e => setPesquisa(e.target.value)}
-        className="usuarios-pesquisa"
-      />
+      <div className="usuarios-filtros">
+        <input
+          type="text"
+          placeholder="Pesquisar policial por nome ou usuário..."
+          value={pesquisa}
+          onChange={e => setPesquisa(e.target.value)}
+          className="usuarios-pesquisa"
+        />
 
-      <select
-        value={filtroStatus}
-        onChange={e => setFiltroStatus(e.target.value)}
-        className="usuarios-filtro"
-      >
-        <option value="TODOS">TODAS AS CONTAS</option>
-        <option value="ATIVOS">CONTAS ATIVAS</option>
-        <option value="INATIVOS">CONTAS INATIVAS</option>
-      </select>
+        <select
+          value={filtroStatus}
+          onChange={e => setFiltroStatus(e.target.value)}
+          className="usuarios-filtro"
+        >
+          <option value="TODOS">TODAS AS CONTAS</option>
+          <option value="ATIVOS">CONTAS ATIVAS</option>
+          <option value="INATIVOS">CONTAS INATIVAS</option>
+        </select>
       </div>
 
       <div className="usuarios-tabela-container">
@@ -437,7 +540,7 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
                     type="button"
                     onClick={() => alterarStatus(item)}
                     disabled={
-                      item.id === usuarioAtual?.id ||
+                      Number(item.id) === Number(usuarioAtual?.id) ||
                       item.usuario === "lucius"
                     }
                   >
@@ -450,7 +553,7 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
                     type="button"
                     onClick={() => excluirUsuario(item)}
                     disabled={
-                      item.id === usuarioAtual?.id ||
+                      Number(item.id) === Number(usuarioAtual?.id) ||
                       item.usuario === "lucius"
                     }
                     className="botao-excluir-usuario"
@@ -461,10 +564,18 @@ export default function GerenciarUsuarios({ usuarioAtual }) {
               </tr>
             ))}
 
-            {usuariosFiltrados.length === 0 && (
+            {!carregando && usuariosFiltrados.length === 0 && (
               <tr>
                 <td colSpan={6} className="usuarios-vazio">
                   Nenhuma conta encontrada.
+                </td>
+              </tr>
+            )}
+
+            {carregando && (
+              <tr>
+                <td colSpan={6} className="usuarios-vazio">
+                  Carregando usuários...
                 </td>
               </tr>
             )}

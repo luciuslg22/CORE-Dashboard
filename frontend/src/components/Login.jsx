@@ -1,6 +1,7 @@
 
 import { useState } from "react";
 import "./Login.css";
+import { supabase } from "../supabase";
 
 export default function Login({ aoEntrar }) {
   const [usuario, setUsuario] = useState("");
@@ -14,45 +15,67 @@ export default function Login({ aoEntrar }) {
     setErro("");
     setCarregando(true);
 
+
+      try {
+        const { data, error } = await supabase.functions.invoke("login-core", {
+          body: {
+            usuario: usuario.trim().toLowerCase(),
+            senha
+          }
+        });
+
+        if (error || !data?.access_token || !data?.refresh_token) {
+  let mensagem = data?.erro || "Falha na autenticação.";
+
+  if (error?.context) {
     try {
-      const resposta = await fetch("http://localhost:3001/api/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          usuario: usuario.trim().toLowerCase(),
-          senha
-        })
-      });
-
-      const dados = await resposta.json();
-
-      if (!resposta.ok) {
-        setErro(dados.erro || "Não foi possível realizar o login.");
-        return;
-      }
-
-      if (!dados.token || !dados.usuario) {
-        setErro("Resposta de autenticação inválida.");
-        return;
-      }
-
-      sessionStorage.setItem("core_token", dados.token);
-
-      aoEntrar?.(dados.usuario);
+      const resposta = await error.context.clone().json();
+      console.error("Erro login-core:", resposta);
+      mensagem = resposta.erro || resposta.message || resposta.msg || mensagem;
     } catch {
-      setErro("Não foi possível conectar ao servidor C.O.R.E.");
-    } finally {
-      setCarregando(false);
+      console.error("Erro login-core:", error);
     }
+  }
+
+  setErro(mensagem);
+  return;
+}
+
+        const { error: erroSessao } = await supabase.auth.setSession({
+          access_token: data.access_token,
+          refresh_token: data.refresh_token
+        });
+
+        if (erroSessao) {
+          setErro("Não foi possível iniciar a sessão.");
+          return;
+        }
+
+        const { data: cadastro, error: erroCadastro } = await supabase
+          .from("usuarios")
+          .select("id, nome, usuario, patente, interna, ativo")
+          .eq("usuario", usuario.trim().toLowerCase())
+          .single();
+
+        if (erroCadastro || !cadastro?.ativo) {
+          await supabase.auth.signOut();
+          setErro("Não foi possível carregar seu cadastro.");
+          return;
+        }
+
+        aoEntrar?.(cadastro);
+      } catch {
+        setErro("Não foi possível conectar ao Supabase.");
+            } finally {
+        setCarregando(false);
+      }
   }
 
   return (
     <div className="login-pagina">
       <div className="login-caixa">
         <img
-          src="/logo-core.webp"
+          src={`${import.meta.env.BASE_URL}logo-core.webp`}
           alt="Logo C.O.R.E"
           className="login-logo"
         />

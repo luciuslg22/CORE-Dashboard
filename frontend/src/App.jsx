@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 import Login from './components/Login'
+import { supabase } from './supabase'
+import RecuperarSenha from './components/RecuperarSenha'
 import GerenciarUsuarios from './components/GerenciarUsuarios'
 
 import Relatorios, {
@@ -70,68 +72,67 @@ function App() {
   const [usuarioAtual, setUsuarioAtual] = useState(null)
   const [verificandoSessao, setVerificandoSessao] = useState(true)
 
-  useEffect(() => {
-    const controlador = new AbortController()
-    const token = sessionStorage.getItem('core_token')
 
-    if (!token) {
-      setVerificandoSessao(false)
-      return () => controlador.abort()
-    }
+useEffect(() => {
+  let ativo = true
 
-    async function recuperarSessao() {
-      try {
-        const resposta = await fetch('http://localhost:3001/api/usuario-atual', {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controlador.signal
-        })
+  async function recuperarSessao() {
+    try {
+      const { data: sessao, error: erroSessao } =
+        await supabase.auth.getSession()
 
-        if (!resposta.ok) {
-          if (resposta.status === 401 || resposta.status === 403) {
-            sessionStorage.removeItem('core_token')
-          }
-          return
-        }
+      if (erroSessao || !sessao.session) return
 
-        const dados = await resposta.json()
-        if (dados.usuario) {
-          setUsuarioAtual(dados.usuario)
-          setConectado(true)
-        }
-      } catch (erro) {
-        if (erro.name !== 'AbortError') {
-          console.error('Falha ao verificar a sessão:', erro)
-        }
-      } finally {
-        if (!controlador.signal.aborted) {
-          setVerificandoSessao(false)
-        }
+      const { data: cadastro, error: erroCadastro } =
+        await supabase
+          .from('usuarios')
+          .select('id, nome, usuario, patente, interna, ativo')
+          .eq('auth_id', sessao.session.user.id)
+          .single()
+
+      if (!ativo) return
+
+      if (erroCadastro || !cadastro?.ativo) {
+        await supabase.auth.signOut()
+        return
       }
-    }
 
-    recuperarSessao()
-    return () => controlador.abort()
-  }, [])
+      setUsuarioAtual(cadastro)
+      setConectado(true)
+    } catch (erro) {
+      console.error('Falha ao recuperar sessão:', erro)
+    } finally {
+      if (ativo) setVerificandoSessao(false)
+    }
+  }
+
+  recuperarSessao()
+
+  return () => {
+    ativo = false
+  }
+}, [])
 
   function entrarAutenticado(usuario) {
-    if (!usuario || !sessionStorage.getItem('core_token')) return
+  if (!usuario?.id || !usuario.ativo) return
 
-    setUsuarioAtual({
-      id: usuario.id,
-      nome: usuario.nome,
-      usuario: usuario.usuario,
-      patente: usuario.patente,
-      interna: usuario.interna
-    })
-    setConectado(true)
+  setUsuarioAtual(usuario)
+  setConectado(true)
+}
+
+  async function sair() {
+  const { error } = await supabase.auth.signOut()
+
+  if (error) {
+    alert('Não foi possível encerrar a sessão. Tente novamente.')
+    return
   }
 
-  function sair() {
-    sessionStorage.removeItem('core_token')
-    setConectado(false)
-    setUsuarioAtual(null)
-    setPagina('Dashboard')
-  }
+  setConectado(false)
+  setUsuarioAtual(null)
+  setPagina('Dashboard')
+}
+
   const [pagina, setPagina] = useState('Dashboard')
   const [pesquisa, setPesquisa] = useState('')
   const [filtroInterna, setFiltroInterna] = useState('TODAS')
@@ -146,19 +147,49 @@ function App() {
     localStorage.setItem('core_modo_compacto', String(modoCompacto))
   }, [modoCompacto])
 
-  const [acoes, setAcoes] = useState(() => {
-  try {
-    const salvas = localStorage.getItem('core_acoes')
-    const dados = salvas ? JSON.parse(salvas) : []
-    return Array.isArray(dados) ? dados : []
-  } catch {
-    return []
-  }
-})
+const [acoes, setAcoes] = useState([])
 
 useEffect(() => {
-  localStorage.setItem('core_acoes', JSON.stringify(acoes))
-}, [acoes])
+  if (!conectado) return
+
+  let ativo = true
+
+  async function carregarAcoes() {
+    const { data, error } = await supabase
+      .from('core_acoes')
+      .select('*')
+      .order('data', { ascending: false })
+
+    if (error) {
+      console.error('Erro ao carregar ações:', error)
+      return
+    }
+
+    if (!ativo) return
+
+    setAcoes(data || [])
+  }
+
+  carregarAcoes()
+
+  const canal = supabase
+    .channel('core-acoes-tempo-real')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'core_acoes'
+      },
+      () => carregarAcoes()
+    )
+    .subscribe()
+
+  return () => {
+    ativo = false
+    supabase.removeChannel(canal)
+  }
+}, [conectado])
 
 const estatisticasAcoes = {
   vitorias: acoes.filter(acao => acao.resultado === 'VITÓRIA').length,
@@ -230,6 +261,56 @@ const relatoriosExibidos = [
     }
   })
 
+  useEffect(() => {
+  if (!conectado) return
+
+  let ativo = true
+
+  async function carregarEfetivo() {
+    const { data, error } = await supabase
+      .from('core_oficiais')
+      .select('*')
+      .order('id')
+
+    if (error) {
+      console.error('Erro ao carregar efetivo:', error.message)
+      return
+    }
+
+    if (!ativo) return
+
+    setOficiais((data || []).map(item => ({
+      id: Number(item.id),
+      nome: item.nome,
+      patente: item.patente,
+      interna: item.interna,
+      status: item.status,
+      dataEntrada: item.data_entrada || '',
+      cursos: item.cursos || {}
+    })))
+  }
+
+  carregarEfetivo()
+
+  const canal = supabase
+    .channel('core-efetivo')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'core_oficiais'
+      },
+      () => carregarEfetivo()
+    )
+    .subscribe()
+
+  return () => {
+    ativo = false
+    supabase.removeChannel(canal)
+  }
+}, [conectado])
+
   const [modalAberto, setModalAberto] = useState(false)
   const [editando, setEditando] = useState(null)
   const [idFichaAberta, setIdFichaAberta] = useState(null)
@@ -244,8 +325,84 @@ const relatoriosExibidos = [
   })
 
   useEffect(() => {
-    localStorage.setItem('core_oficiais', JSON.stringify(oficiais))
-  }, [oficiais])
+    if (!conectado) return
+
+    let ativo = true
+
+    function mapearOficialBanco(item) {
+      return {
+        id: Number(item.id),
+        nome: item.nome,
+        patente: item.patente,
+        interna: item.interna,
+        status: item.status,
+        dataEntrada: item.data_entrada || '',
+        cursos: item.cursos || {}
+      }
+    }
+
+    async function carregarEfetivo() {
+      const { data, error } = await supabase
+        .from('core_oficiais')
+        .select('*')
+        .order('id')
+
+      if (error) {
+        console.error('Erro ao carregar efetivo:', error)
+        return
+      }
+
+      if (!ativo) return
+
+      if (data.length > 0) {
+        setOficiais(data.map(mapearOficialBanco))
+        return
+      }
+
+      const registros = oficiais.map(item => ({
+        id: Number(item.id),
+        nome: item.nome,
+        patente: item.patente,
+        interna: item.interna,
+        status: item.status,
+        data_entrada: item.dataEntrada || null,
+        cursos: item.cursos || {}
+      }))
+
+      if (registros.length === 0) return
+
+      const { data: importados, error: erroImportacao } = await supabase
+        .from('core_oficiais')
+        .upsert(registros, { onConflict: 'id' })
+        .select('*')
+
+      if (erroImportacao) {
+        console.error('Erro ao importar efetivo local:', erroImportacao)
+        alert('Não foi possível importar o efetivo para o banco compartilhado.')
+        return
+      }
+
+      if (ativo && importados) {
+        setOficiais(importados.map(mapearOficialBanco))
+      }
+    }
+
+    carregarEfetivo()
+
+    const canal = supabase
+      .channel('core-efetivo-compartilhado')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'core_oficiais' },
+        () => carregarEfetivo()
+      )
+      .subscribe()
+
+    return () => {
+      ativo = false
+      supabase.removeChannel(canal)
+    }
+  }, [conectado])
 
   const normalizarInterna = valor => String(valor || '')
     .normalize('NFD')
@@ -293,44 +450,68 @@ const relatoriosExibidos = [
     oficial => oficial.status === 'INATIVO'
   ).length
 
-  function alterarStatus(id) {
-    setOficiais(anteriores =>
-      anteriores.map(oficial =>
-        oficial.id === id
-          ? {
-              ...oficial,
-              status: oficial.status === 'ATIVO' ? 'INATIVO' : 'ATIVO'
-            }
-          : oficial
-      )
-    )
+async function alterarStatus(id) {
+  const oficial = oficiais.find(
+    item => Number(item.id) === Number(id)
+  )
+
+  if (!oficial) return
+
+  const novoStatus = oficial.status === 'ATIVO'
+    ? 'INATIVO'
+    : 'ATIVO'
+
+  const { error } = await supabase
+    .from('core_oficiais')
+    .update({ status: novoStatus })
+    .eq('id', id)
+
+  if (error) {
+    console.error('Erro ao alterar status:', error)
+    alert('Não foi possível alterar o status: ' + error.message)
+    return
   }
 
-  
-function alterarCurso(id, curso) {
   setOficiais(anteriores =>
-    anteriores.map(oficial => {
-      if (oficial.id !== id) return oficial
-
-      const cursos = oficial.cursos || {}
-
-      return {
-        ...oficial,
-        cursos: {
-          ...cursos,
-          [curso]: !cursos[curso]
-        }
-      }
-    })
+    anteriores.map(item =>
+      Number(item.id) === Number(id)
+        ? { ...item, status: novoStatus }
+        : item
+    )
   )
 }
 
-function contarCursos(oficial) {
-  return cursosDisponiveis.filter(
-    curso => oficial.cursos?.[curso] === true
-  ).length
-}
+async function alterarCurso(id, curso) {
+  const oficial = oficiais.find(
+    item => Number(item.id) === Number(id)
+  )
 
+  if (!oficial) return
+
+  const cursos = {
+    ...(oficial.cursos || {}),
+    [curso]: !(oficial.cursos || {})[curso]
+  }
+
+  const { error } = await supabase
+    .from('core_oficiais')
+    .update({ cursos })
+    .eq('id', id)
+
+  if (error) {
+    console.error('Erro ao salvar curso:', error)
+    alert('Não foi possível salvar a alteração do curso: ' + error.message)
+    return
+  }
+
+  setOficiais(anteriores =>
+    anteriores.map(item =>
+      Number(item.id) === Number(id)
+        ? { ...item, cursos }
+        : item
+    )
+  )
+}
 
   function abrirCadastro() {
     setEditando(null)
@@ -365,61 +546,177 @@ function contarCursos(oficial) {
     }))
   }
 
-  function salvarPolicial(evento) {
-    evento.preventDefault()
+  async function salvarPolicial(evento) {
+  evento.preventDefault()
 
-    const id = Number(formulario.id)
-    const nome = formulario.nome.trim()
+  const id = Number(formulario.id)
+  const nome = formulario.nome.trim()
 
-    if (!Number.isSafeInteger(id) || id <= 0) {
-      alert('Informe um ID válido.')
-      return
-    }
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    alert('Informe um ID válido.')
+    return
+  }
 
-    if (!nome) {
-      alert('Informe o nome do policial.')
-      return
-    }
+  if (!nome) {
+    alert('Informe o nome do policial.')
+    return
+  }
 
-    const idExistente = oficiais.some(
-      oficial => oficial.id === id && oficial.id !== editando
-    )
+  const idExistente = oficiais.some(
+    oficial =>
+      Number(oficial.id) === id &&
+      Number(oficial.id) !== Number(editando)
+  )
 
-    if (idExistente) {
-      alert('Já existe um policial cadastrado com este ID.')
-      return
-    }
+  if (idExistente) {
+    alert('Já existe um policial cadastrado com este ID.')
+    return
+  }
+
+  const anterior = oficiais.find(
+    oficial => Number(oficial.id) === Number(editando)
+  )
+
+async function salvarPolicial(evento) {
+  evento.preventDefault()
+
+  const id = Number(formulario.id)
+  const nome = formulario.nome.trim()
+
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    alert('Informe um ID válido.')
+    return
+  }
+
+  if (!nome) {
+    alert('Informe o nome do policial.')
+    return
+  }
+
+  const idExistente = oficiais.some(
+    oficial =>
+      Number(oficial.id) === id &&
+      Number(oficial.id) !== Number(editando)
+  )
+
+  if (idExistente) {
+    alert('Já existe um policial cadastrado com este ID.')
+    return
+  }
+
+  const anterior = oficiais.find(
+    oficial => Number(oficial.id) === Number(editando)
+  )
+
+  const dados = {
+    id,
+    nome,
+    patente: formulario.patente,
+    interna: formulario.interna,
+    status: formulario.status,
+    data_entrada: formulario.dataEntrada || null,
+    cursos: anterior?.cursos || formulario.cursos || {}
+  }
+
+  const { data, error } = await supabase
+    .from('core_oficiais')
+    .upsert(dados, { onConflict: 'id' })
+    .select('*')
+    .single()
+
+  if (error) {
+    console.error('Erro ao salvar policial:', error)
+    alert('Não foi possível salvar: ' + error.message)
+    return
+  }
+
+  const oficialSalvo = {
+    id: Number(data.id),
+    nome: data.nome,
+    patente: data.patente,
+    interna: data.interna,
+    status: data.status,
+    dataEntrada: data.data_entrada || '',
+    cursos: data.cursos || {}
+  }
+
+  setOficiais(anteriores =>
+    anteriores.some(item => Number(item.id) === id)
+      ? anteriores.map(item =>
+          Number(item.id) === id ? oficialSalvo : item
+        )
+      : [...anteriores, oficialSalvo]
+  )
+
+  fecharModal()
+}
 
     const dados = {
-      ...formulario,
       id,
-      nome
+      nome,
+      patente: formulario.patente,
+      interna: formulario.interna,
+      status: formulario.status,
+      data_entrada: formulario.dataEntrada || null,
+      cursos: formulario.cursos || {}
     }
 
-    if (editando !== null) {
-      setOficiais(anteriores =>
-        anteriores.map(oficial =>
-          oficial.id === editando ? dados : oficial
-        )
-      )
-    } else {
-      setOficiais(anteriores => [...anteriores, dados])
+    const { data, error } = await supabase
+      .from('core_oficiais')
+      .upsert(dados, { onConflict: 'id' })
+      .select('*')
+      .single()
+
+    if (error) {
+      console.error('Erro ao salvar policial:', error)
+      alert('Não foi possível salvar o policial no banco compartilhado.')
+      return
     }
+
+    const oficialSalvo = {
+      id: Number(data.id),
+      nome: data.nome,
+      patente: data.patente,
+      interna: data.interna,
+      status: data.status,
+      dataEntrada: data.data_entrada || '',
+      cursos: data.cursos || {}
+    }
+
+    setOficiais(anteriores => {
+      const existe = anteriores.some(item => Number(item.id) === id)
+      return existe
+        ? anteriores.map(item => Number(item.id) === id ? oficialSalvo : item)
+        : [...anteriores, oficialSalvo]
+    })
 
     fecharModal()
   }
 
-  function excluirPolicial(oficial) {
-    const confirmado = window.confirm(
-      `Deseja realmente excluir o policial ${oficial.nome} (ID ${oficial.id})?`
-    )
+async function excluirPolicial(oficial) {
+  const confirmado = window.confirm(
+    `Deseja realmente excluir o policial ${oficial.nome} (ID ${oficial.id})?`
+  )
 
-    if (!confirmado) return
+  if (!confirmado) return
 
-    setOficiais(anteriores =>
-      anteriores.filter(item => item.id !== oficial.id)
-    )
+  const { error } = await supabase
+    .from('core_oficiais')
+    .delete()
+    .eq('id', oficial.id)
+
+  if (error) {
+    console.error('Erro ao excluir policial:', error)
+    alert('Não foi possível excluir: ' + error.message)
+    return
   }
+
+  setOficiais(anteriores =>
+    anteriores.filter(
+      item => Number(item.id) !== Number(oficial.id)
+    )
+  )
+}
 
   const indicadores = [
     ['EFETIVO TOTAL', oficiais.length, '♟'],
@@ -440,13 +737,19 @@ function contarCursos(oficial) {
   }
 
   return (
-    <div className={`sistema ${modoCompacto ? 'core-compacto' : ''}`}>
-      <aside className="menu-lateral">
-        <div className="marca">
-          <div className="simbolo"><img src="/logo-core.webp" alt="Logo C.O.R.E" className="logo-core-lateral" /></div>
-          <h2>C.O.R.E</h2>
-          <p>COORDENADORIA DE RECURSOS ESPECIAIS</p>
-        </div>
+   <div className={`sistema ${modoCompacto ? 'core-compacto' : ''}`}>
+  <aside className="menu-lateral">
+    <div className="marca">
+      <div className="simbolo">
+        <img
+          src={`${import.meta.env.BASE_URL}logo-core.webp`}
+          alt="Logo C.O.R.E"
+          className="logo-core-lateral"
+        />
+      </div>
+      <h2>C.O.R.E</h2>
+      <p>COORDENADORIA DE RECURSOS ESPECIAIS</p>
+    </div>
 
         <nav>
           {menus.filter(item => item.nome !== 'Gerenciar Usuários' || usuarioAtual?.interna === 'ALTO COMANDO').map(item => (
