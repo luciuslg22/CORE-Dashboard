@@ -1,7 +1,7 @@
 
 require("dotenv").config();
 
-const banco = require("./banco");
+const { bancoPostgres } = require("./postgres");
 const { buscarUsuario, verificarSenha, criptografarSenha } = require("./autenticacao");
 const jwt = require("jsonwebtoken");
 const verificarToken = require("./verificarToken");
@@ -11,7 +11,7 @@ const cors = require("cors");
 const aplicativo = express();
 
 aplicativo.use(cors());
-aplicativo.use(express.json());
+aplicativo.use(express.json({ limit: "100kb" }));
 
 function somenteAltoComando(requisicao, resposta, proximo) {
     if (requisicao.usuario?.interna !== "ALTO COMANDO") {
@@ -23,20 +23,48 @@ function somenteAltoComando(requisicao, resposta, proximo) {
     proximo();
 }
 
-function buscarConta(id) {
-    return banco.prepare(`
-        SELECT id, nome, usuario, patente, interna, ativo
-        FROM usuarios
-        WHERE id = ?
-    `).get(id);
+function validarId(valor) {
+    const id = Number(valor);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
-function contarAltosComandosAtivos() {
-    return banco.prepare(`
-        SELECT COUNT(*) AS total
-        FROM usuarios
-        WHERE interna = 'ALTO COMANDO' AND ativo = 1
-    `).get().total;
+async function buscarConta(id, cliente = bancoPostgres) {
+    const resultado = await cliente.query(
+        `SELECT id, nome, usuario, patente, interna, ativo
+         FROM usuarios
+         WHERE id = $1`,
+        [id]
+    );
+
+    return resultado.rows[0] || null;
+}
+
+async function contarAltosComandosAtivos(cliente = bancoPostgres) {
+    const resultado = await cliente.query(
+        `SELECT COUNT(*)::integer AS total
+         FROM usuarios
+         WHERE interna = 'ALTO COMANDO' AND ativo = TRUE`
+    );
+
+    return resultado.rows[0].total;
+}
+
+async function executarComTransacao(operacao) {
+    const cliente = await bancoPostgres.connect();
+
+    try {
+        await cliente.query("BEGIN");
+
+        const resultado = await operacao(cliente);
+
+        await cliente.query("COMMIT");
+        return resultado;
+    } catch (erro) {
+        await cliente.query("ROLLBACK");
+        throw erro;
+    } finally {
+        cliente.release();
+    }
 }
 
 aplicativo.get("/", (requisicao, resposta) => {
@@ -48,7 +76,7 @@ aplicativo.get("/", (requisicao, resposta) => {
 
 aplicativo.post("/api/login", async (requisicao, resposta) => {
     try {
-        const { usuario, senha } = requisicao.body;
+        const { usuario, senha } = requisicao.body || {};
 
         if (
             typeof usuario !== "string" ||
@@ -61,7 +89,7 @@ aplicativo.post("/api/login", async (requisicao, resposta) => {
             });
         }
 
-        const conta = buscarUsuario(usuario.trim().toLowerCase());
+        const conta = await buscarUsuario(usuario.trim().toLowerCase());
 
         if (!conta || !conta.ativo) {
             return resposta.status(401).json({
@@ -129,17 +157,24 @@ aplicativo.get(
     "/api/usuarios",
     verificarToken,
     somenteAltoComando,
-    (requisicao, resposta) => {
-        const usuarios = banco.prepare(`
-            SELECT id, nome, usuario, patente, interna, ativo
-            FROM usuarios
-            ORDER BY nome COLLATE NOCASE
-        `).all().map(conta => ({
-            ...conta,
-            ativo: Boolean(conta.ativo)
-        }));
+    async (requisicao, resposta) => {
+        try {
+            const resultado = await bancoPostgres.query(
+                `SELECT id, nome, usuario, patente, interna, ativo
+                 FROM usuarios
+                 ORDER BY LOWER(nome), id`
+            );
 
-        resposta.json({ usuarios });
+            return resposta.json({
+                usuarios: resultado.rows
+            });
+        } catch (erro) {
+            console.error("Erro ao listar usuários:", erro.message);
+
+            return resposta.status(500).json({
+                erro: "Não foi possível listar os usuários."
+            });
+        }
     }
 );
 
@@ -149,7 +184,8 @@ aplicativo.post(
     somenteAltoComando,
     async (requisicao, resposta) => {
         try {
-            const { nome, usuario, senha, patente, interna } = requisicao.body;
+            const { nome, usuario, senha, patente, interna } =
+                requisicao.body || {};
 
             if (
                 typeof nome !== "string" ||
@@ -176,9 +212,9 @@ aplicativo.post(
                 });
             }
 
-            if (senha.length < 12) {
+            if (senha.length < 6) {
                 return resposta.status(400).json({
-                    erro: "A senha deve ter pelo menos 12 caracteres."
+                    erro: "A senha deve ter pelo menos 6 caracteres."
                 });
             }
 
@@ -188,32 +224,28 @@ aplicativo.post(
                 });
             }
 
-            if (buscarUsuario(nomeUsuario)) {
-                return resposta.status(409).json({
-                    erro: "Esse nome de usuário já existe."
-                });
-            }
-
             const senhaHash = await criptografarSenha(senha);
 
-            const resultado = banco.prepare(`
-                INSERT INTO usuarios
-                (nome, usuario, senha_hash, patente, interna, ativo)
-                VALUES (?, ?, ?, ?, ?, 1)
-            `).run(
-                nome.trim(),
-                nomeUsuario,
-                senhaHash,
-                patente.trim(),
-                interna.trim()
+            const resultado = await bancoPostgres.query(
+                `INSERT INTO usuarios
+                 (nome, usuario, senha_hash, patente, interna, ativo)
+                 VALUES ($1, $2, $3, $4, $5, TRUE)
+                 RETURNING id, nome, usuario, patente, interna, ativo`,
+                [
+                    nome.trim(),
+                    nomeUsuario,
+                    senhaHash,
+                    patente.trim(),
+                    interna.trim()
+                ]
             );
 
             return resposta.status(201).json({
                 mensagem: "Usuário cadastrado com sucesso.",
-                usuario: buscarConta(Number(resultado.lastInsertRowid))
+                usuario: resultado.rows[0]
             });
         } catch (erro) {
-            if (erro.code === "SQLITE_CONSTRAINT_UNIQUE") {
+            if (erro.code === "23505") {
                 return resposta.status(409).json({
                     erro: "Esse nome de usuário já existe."
                 });
@@ -233,78 +265,120 @@ aplicativo.put(
     verificarToken,
     somenteAltoComando,
     async (requisicao, resposta) => {
-        try {
-            const id = Number(requisicao.params.id);
-            const { nome, patente, interna, senha } = requisicao.body;
+        const id = validarId(requisicao.params.id);
 
-            if (!Number.isSafeInteger(id) || id <= 0) {
-                return resposta.status(400).json({
-                    erro: "ID inválido."
-                });
-            }
-
-            const conta = buscarConta(id);
-
-            if (!conta) {
-                return resposta.status(404).json({
-                    erro: "Usuário não encontrado."
-                });
-            }
-
-            if (conta.usuario === "lucius") {
-                return resposta.status(403).json({
-                    erro: "A conta administrativa principal está protegida."
-                });
-            }
-
-            if (
-                typeof nome !== "string" ||
-                !nome.trim() ||
-                typeof patente !== "string" ||
-                !patente.trim() ||
-                typeof interna !== "string" ||
-                !interna.trim() ||
-                (senha !== undefined && (
-                    typeof senha !== "string" ||
-                    (senha.length > 0 && senha.length < 12)
-                ))
-            ) {
-                return resposta.status(400).json({
-                    erro: "Dados inválidos. A nova senha deve ter pelo menos 12 caracteres."
-                });
-            }
-
-            if (
-                conta.interna === "ALTO COMANDO" &&
-                conta.ativo &&
-                interna !== "ALTO COMANDO" &&
-                contarAltosComandosAtivos() <= 1
-            ) {
-                return resposta.status(400).json({
-                    erro: "Não é possível remover o último ALTO COMANDO ativo."
-                });
-            }
-
-            if (senha) {
-                const senhaHash = await criptografarSenha(senha);
-
-                banco.prepare(`
-                    UPDATE usuarios
-                    SET nome = ?, patente = ?, interna = ?, senha_hash = ?
-                    WHERE id = ?
-                `).run(nome.trim(), patente.trim(), interna.trim(), senhaHash, id);
-            } else {
-                banco.prepare(`
-                    UPDATE usuarios
-                    SET nome = ?, patente = ?, interna = ?
-                    WHERE id = ?
-                `).run(nome.trim(), patente.trim(), interna.trim(), id);
-            }
-
-            return resposta.json({
-                mensagem: "Usuário atualizado com sucesso.",
-                usuario: buscarConta(id)
+        if (!id) {
+            return resposta.status(400).json({
+                erro: "ID inválido."
             });
+        }
+
+        const { nome, patente, interna, senha } =
+            requisicao.body || {};
+
+        if (
+            typeof nome !== "string" ||
+            !nome.trim() ||
+            typeof patente !== "string" ||
+            !patente.trim() ||
+            typeof interna !== "string" ||
+            !interna.trim() ||
+            (senha !== undefined && (
+                typeof senha !== "string" ||
+                (senha.length > 0 && senha.length < 6)
+            ))
+        ) {
+            return resposta.status(400).json({
+                erro: "Dados inválidos. A nova senha deve ter pelo menos 6 caracteres."
+            });
+        }
+
+        try {
+            const resultado = await executarComTransacao(async cliente => {
+                await cliente.query(
+                    "SELECT pg_advisory_xact_lock(20261026)"
+                );
+
+                const conta = await buscarConta(id, cliente);
+
+                if (!conta) {
+                    return {
+                        status: 404,
+                        dados: { erro: "Usuário não encontrado." }
+                    };
+                }
+
+                if (conta.usuario === "lucius") {
+                    return {
+                        status: 403,
+                        dados: {
+                            erro: "A conta administrativa principal está protegida."
+                        }
+                    };
+                }
+
+                if (
+                    conta.interna === "ALTO COMANDO" &&
+                    conta.ativo &&
+                    interna.trim() !== "ALTO COMANDO" &&
+                    await contarAltosComandosAtivos(cliente) <= 1
+                ) {
+                    return {
+                        status: 400,
+                        dados: {
+                            erro: "Não é possível remover o último ALTO COMANDO ativo."
+                        }
+                    };
+                }
+
+                let atualizacao;
+
+                if (senha) {
+                    const senhaHash = await criptografarSenha(senha);
+
+                    atualizacao = await cliente.query(
+                        `UPDATE usuarios
+                         SET nome = $1,
+                             patente = $2,
+                             interna = $3,
+                             senha_hash = $4
+                         WHERE id = $5
+                         RETURNING id, nome, usuario, patente, interna, ativo`,
+                        [
+                            nome.trim(),
+                            patente.trim(),
+                            interna.trim(),
+                            senhaHash,
+                            id
+                        ]
+                    );
+                } else {
+                    atualizacao = await cliente.query(
+                        `UPDATE usuarios
+                         SET nome = $1,
+                             patente = $2,
+                             interna = $3
+                         WHERE id = $4
+                         RETURNING id, nome, usuario, patente, interna, ativo`,
+                        [
+                            nome.trim(),
+                            patente.trim(),
+                            interna.trim(),
+                            id
+                        ]
+                    );
+                }
+
+                return {
+                    status: 200,
+                    dados: {
+                        mensagem: "Usuário atualizado com sucesso.",
+                        usuario: atualizacao.rows[0]
+                    }
+                };
+            });
+
+            return resposta.status(resultado.status).json(resultado.dados);
         } catch (erro) {
             console.error("Erro ao atualizar usuário:", erro.message);
 
@@ -319,11 +393,11 @@ aplicativo.patch(
     "/api/usuarios/:id/status",
     verificarToken,
     somenteAltoComando,
-    (requisicao, resposta) => {
-        const id = Number(requisicao.params.id);
-        const { ativo } = requisicao.body;
+    async (requisicao, resposta) => {
+        const id = validarId(requisicao.params.id);
+        const { ativo } = requisicao.body || {};
 
-        if (!Number.isSafeInteger(id) || id <= 0) {
+        if (!id) {
             return resposta.status(400).json({
                 erro: "ID inválido."
             });
@@ -335,42 +409,72 @@ aplicativo.patch(
             });
         }
 
-        const conta = buscarConta(id);
+        try {
+            const resultado = await executarComTransacao(async cliente => {
+                await cliente.query(
+                    "SELECT pg_advisory_xact_lock(20261026)"
+                );
 
-        if (!conta) {
-            return resposta.status(404).json({
-                erro: "Usuário não encontrado."
+                const conta = await buscarConta(id, cliente);
+
+                if (!conta) {
+                    return {
+                        status: 404,
+                        dados: { erro: "Usuário não encontrado." }
+                    };
+                }
+
+                if (
+                    conta.usuario === "lucius" ||
+                    id === Number(requisicao.usuario.id)
+                ) {
+                    return {
+                        status: 403,
+                        dados: {
+                            erro: "Essa conta não pode ser desativada ou reativada por aqui."
+                        }
+                    };
+                }
+
+                if (
+                    !ativo &&
+                    conta.ativo &&
+                    conta.interna === "ALTO COMANDO" &&
+                    await contarAltosComandosAtivos(cliente) <= 1
+                ) {
+                    return {
+                        status: 400,
+                        dados: {
+                            erro: "Não é possível desativar o último ALTO COMANDO ativo."
+                        }
+                    };
+                }
+
+                const atualizacao = await cliente.query(
+                    `UPDATE usuarios
+                     SET ativo = $1
+                     WHERE id = $2
+                     RETURNING id, nome, usuario, patente, interna, ativo`,
+                    [ativo, id]
+                );
+
+                return {
+                    status: 200,
+                    dados: {
+                        mensagem: "Status atualizado com sucesso.",
+                        usuario: atualizacao.rows[0]
+                    }
+                };
+            });
+
+            return resposta.status(resultado.status).json(resultado.dados);
+        } catch (erro) {
+            console.error("Erro ao atualizar status:", erro.message);
+
+            return resposta.status(500).json({
+                erro: "Não foi possível atualizar o status."
             });
         }
-
-        if (conta.usuario === "lucius" || id === requisicao.usuario.id) {
-            return resposta.status(403).json({
-                erro: "Essa conta não pode ser desativada ou reativada por aqui."
-            });
-        }
-
-        if (
-            !ativo &&
-            conta.ativo &&
-            conta.interna === "ALTO COMANDO" &&
-            contarAltosComandosAtivos() <= 1
-        ) {
-            return resposta.status(400).json({
-                erro: "Não é possível desativar o último ALTO COMANDO ativo."
-            });
-        }
-
-        banco.prepare(`
-            UPDATE usuarios SET ativo = ? WHERE id = ?
-        `).run(ativo ? 1 : 0, id);
-
-        return resposta.json({
-            mensagem: "Status atualizado com sucesso.",
-            usuario: {
-                ...buscarConta(id),
-                ativo
-            }
-        });
     }
 );
 
@@ -378,44 +482,76 @@ aplicativo.delete(
     "/api/usuarios/:id",
     verificarToken,
     somenteAltoComando,
-    (requisicao, resposta) => {
-        const id = Number(requisicao.params.id);
+    async (requisicao, resposta) => {
+        const id = validarId(requisicao.params.id);
 
-        if (!Number.isSafeInteger(id) || id <= 0) {
+        if (!id) {
             return resposta.status(400).json({
                 erro: "ID inválido."
             });
         }
 
-        const conta = buscarConta(id);
+        try {
+            const resultado = await executarComTransacao(async cliente => {
+                await cliente.query(
+                    "SELECT pg_advisory_xact_lock(20261026)"
+                );
 
-        if (!conta) {
-            return resposta.status(404).json({
-                erro: "Usuário não encontrado."
+                const conta = await buscarConta(id, cliente);
+
+                if (!conta) {
+                    return {
+                        status: 404,
+                        dados: { erro: "Usuário não encontrado." }
+                    };
+                }
+
+                if (
+                    conta.usuario === "lucius" ||
+                    id === Number(requisicao.usuario.id)
+                ) {
+                    return {
+                        status: 403,
+                        dados: {
+                            erro: "Essa conta administrativa não pode ser excluída."
+                        }
+                    };
+                }
+
+                if (
+                    conta.ativo &&
+                    conta.interna === "ALTO COMANDO" &&
+                    await contarAltosComandosAtivos(cliente) <= 1
+                ) {
+                    return {
+                        status: 400,
+                        dados: {
+                            erro: "Não é possível excluir o último ALTO COMANDO ativo."
+                        }
+                    };
+                }
+
+                await cliente.query(
+                    "DELETE FROM usuarios WHERE id = $1",
+                    [id]
+                );
+
+                return {
+                    status: 200,
+                    dados: {
+                        mensagem: "Usuário excluído com sucesso."
+                    }
+                };
+            });
+
+            return resposta.status(resultado.status).json(resultado.dados);
+        } catch (erro) {
+            console.error("Erro ao excluir usuário:", erro.message);
+
+            return resposta.status(500).json({
+                erro: "Não foi possível excluir o usuário."
             });
         }
-
-        if (conta.usuario === "lucius" || id === requisicao.usuario.id) {
-            return resposta.status(403).json({
-                erro: "Essa conta administrativa não pode ser excluída."
-            });
-        }
-
-        if (
-            conta.ativo &&
-            conta.interna === "ALTO COMANDO" &&
-            contarAltosComandosAtivos() <= 1
-        ) {
-            return resposta.status(400).json({
-                erro: "Não é possível excluir o último ALTO COMANDO ativo."
-            });
-        }
-
-        banco.prepare("DELETE FROM usuarios WHERE id = ?").run(id);
-
-        return resposta.json({
-            mensagem: "Usuário excluído com sucesso."
-        });
     }
 );
 
