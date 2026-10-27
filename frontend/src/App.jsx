@@ -68,6 +68,11 @@ const internas = [
   'PROBATORIO'
 ]
 function App() {
+    function contarCursos(oficial) {
+    return cursosDisponiveis.filter(
+      curso => oficial.cursos?.[curso] === true
+    ).length
+  }
   const [conectado, setConectado] = useState(false)
   const [usuarioAtual, setUsuarioAtual] = useState(null)
   const [verificandoSessao, setVerificandoSessao] = useState(true)
